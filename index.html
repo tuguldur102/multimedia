@@ -1,130 +1,47 @@
 <!DOCTYPE html>
 <html>
 <head>
-<meta charset="utf-8" />
-<title>Huffman & Shannon-Fano visualiser</title>
+  <meta charset="utf-8" />
+  <title>PyScript sanity check</title>
 
-<!-- PyScript runtime -->
-<link  rel="stylesheet" href="https://pyscript.net/latest/pyscript.css" />
-<script defer src="https://pyscript.net/latest/pyscript.js"></script>
+  <!-- 1. GRAPHVIZ runtime (must load *before* PyScript).  No "defer". -->
+  <script src="https://unpkg.com/viz.js@2.1.2/viz.js"></script>
+  <script src="https://unpkg.com/viz.js@2.1.2/full.render.js"></script>
 
-<!-- Viz.js (pure-JS Graphviz) -->
-<script src="https://unpkg.com/viz.js@2.1.2/viz.js" defer></script>
-<script src="https://unpkg.com/viz.js@2.1.2/full.render.js" defer></script>
+  <!-- 2. PYSCRIPT runtime -->
+  <link  rel="stylesheet" href="https://pyscript.net/latest/pyscript.css" />
+  <script src="https://pyscript.net/latest/pyscript.js"></script>
 
-<style>
- body{font-family:system-ui;padding:1rem;max-width:800px;margin:auto}
- textarea{width:100%}
- #output svg{max-width:100%}
- .tbl{font-family:Menlo,monospace;font-size:.9rem;background:#fafafa;
-      border:1px solid #ddd;padding:.5rem;border-radius:.5rem}
-</style>
+  <!-- 3. Tell PyScript which wheels to fetch -->
+  <py-config>
+    packages = ["networkx", "pydot"]
+  </py-config>
 
-<!-- Tell PyScript which wheels to download -->
-<py-config>
-  packages = ["networkx", "pydot"]
-</py-config>
+  <style>body{font-family:sans-serif;padding:1rem}</style>
 </head>
 
 <body>
-<h1>Huffman / Shannon-Fano demo</h1>
+  <h1>PyScript test page</h1>
 
-<label>Input text:</label>
-<textarea id="txt" rows="4">Tuguldur Bayarsaikhan</textarea><br/>
+  <textarea id="txt" rows="2">abc</textarea>
+  <button id="run">Run</button>
 
-<label>Algorithm:</label>
-<select id="alg">
-  <option>Huffman</option>
-  <option>Shannon-Fano</option>
-</select>
-<button id="run">Visualise</button>
+  <h2>Console output</h2>
+  <pre id="out"></pre>
 
-<h2>Tree</h2>
-<div id="output"><em>press “Visualise”</em></div>
+  <!-- 4. Load your Python helpers -->
+  <py-script src="codec.py"></py-script>
 
-<h2>Statistics</h2>
-<pre id="stats" class="tbl"></pre>
+  <!-- 5. Tiny Python snippet just to prove things work -->
+  <py-script>
+from js import document, console
+print("✅ PyScript is alive!")      # should show in browser dev-tools *and* below
 
-<!-- ----------  Python logic  ---------------- -->
+def on_click(evt):
+    txt = document.querySelector("#txt").value
+    document.querySelector("#out").textContent = f"You typed: {txt}"
 
-<!-- your original code copied verbatim -->
-<py-script src="codec.py"></py-script>
-
-<py-script>
-from js import document, window, console
-import textwrap, math, collections, itertools, pydot, networkx as nx
-from codec import build_huffman_tree, gen_codes, ShannonFano   # <- from your file
-
-def nx_to_svg(g: nx.DiGraph) -> str:
-    """Convert networkx DiGraph -> SVG string using pydot + viz.js"""
-    dot = nx.nx_pydot.to_pydot(g)
-    svg_txt = window.Viz(dot.to_string(), { "format": "svg", "engine": "dot" })
-    return svg_txt
-
-def build_tree_and_codes(text, alg):
-    if alg == "Huffman":
-        root = build_huffman_tree(text)
-        codes = gen_codes(root)
-        return root, codes
-    else:
-        sf = ShannonFano(text)
-        # ShannonFano already computed everything
-        # Build a fake tree from df for unified rendering
-        df = sf.dataframe()
-        codes = {eval(row["Symbol"]): row["Code"] for _, row in df.iterrows()}
-        # Re-create a node-based tree so networkx can walk it
-        class N: pass
-        root = N(); root.left = root.right = None
-        root.label = ""
-        root.id = 0
-        child_map = {}
-        counter = itertools.count(1)
-        def add(code, sym):
-            node = root
-            for bit in code:
-                key = (id(node), bit)
-                if key not in child_map:
-                    new = N(); new.left=new.right=None; new.label=""; new.id=next(counter)
-                    if bit=="0": node.left = new
-                    else: node.right = new
-                    child_map[key]=new
-                node = child_map[key]
-            node.label = sym
-        for sym, code in codes.items():
-            add(code, sym)
-        return root, codes
-
-def to_nx(node, g=None):
-    if g is None: g = nx.DiGraph()
-    g.add_node(id(node), label=getattr(node,"label",""))
-    if getattr(node,"left",None):
-        g.add_edge(id(node), id(node.left), bit="0"); to_nx(node.left, g)
-    if getattr(node,"right",None):
-        g.add_edge(id(node), id(node.right), bit="1"); to_nx(node.right, g)
-    return g
-
-def stats_table(text, codes):
-    freqs = collections.Counter(text); N=len(text)
-    rows = []
-    for c,f in sorted(freqs.items(), key=lambda x:(-x[1],x[0])):
-        rows.append(f"{repr(c):4} | {f:3} | {f/N:5.3f} | {codes[c]}")
-    entropy = -sum((f/N)*math.log2(f/N) for f in freqs.values())
-    avg_len = sum((f/N)*len(codes[c]) for c,f in freqs.items())
-    rows.append("\nentropy = {:.3f} bits/symbol".format(entropy))
-    rows.append("avg len = {:.3f} bits/symbol".format(avg_len))
-    return "\n".join(rows)
-
-def run(evt):
-    txt  = document.querySelector("#txt").value
-    alg  = document.querySelector("#alg").value
-    if not txt.strip(): return
-
-    root, codes = build_tree_and_codes(txt, alg)
-    svg   = nx_to_svg(to_nx(root))
-    document.querySelector("#output").innerHTML = svg
-    document.querySelector("#stats").textContent = stats_table(txt, codes)
-
-document.querySelector("#run").addEventListener("click", run)
-</py-script>
+document.querySelector("#run").addEventListener("click", on_click)
+  </py-script>
 </body>
 </html>
